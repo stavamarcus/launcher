@@ -84,6 +84,23 @@ def select_module(available: list) -> tuple | None:
             return available[choice - 1]
         print("Neplatná volba.")
 
+def ask_date_optional(prompt: str) -> str | None:
+    """
+    Zeptá se na datum ve formátu DD-MM-YYYY.
+    Enter = None (použij default).
+    Převede na YYYY-MM-DD pro CLI.
+    """
+    while True:
+        val = input(prompt).strip()
+        if val == "":
+            return None
+        try:
+            d = datetime.strptime(val, "%d-%m-%Y")
+            return d.strftime("%Y-%m-%d")
+        except ValueError:
+            print("  Neplatný formát. Zadej DD-MM-YYYY (např. 01-01-2016) nebo Enter.")
+
+
 def ask_date(prompt: str) -> str:
     """Zeptá se na datum ve formátu DD-MM-YYYY. Převede na YYYY-MM-DD pro program."""
     while True:
@@ -113,16 +130,23 @@ def run_mdsm_only(module_name: str, module_path: Path) -> None:
         print("Nejdřív spusť variantu 2 (UniverseManager + MDSM-Lite).")
         return
 
+    # Volitelné datum rozsahu
+    print("\nZadej rozsah dat (Enter = použij výchozí hodnoty):\n")
+    start_str = ask_date_optional("Start date (DD-MM-YYYY, Enter = default 2018-06-19): ")
+    end_str   = ask_date_optional("End date   (DD-MM-YYYY, Enter = dnes):               ")
+
+    cmd = [
+        "python", "src/collector/data_collector.py",
+        "--universe-path", str(universe_csv),
+        "--module-name", module_name,
+    ]
+    if start_str:
+        cmd += ["--start-date", start_str]
+    if end_str:
+        cmd += ["--end-date", end_str]
+
     print(f"\n>>> Data Collector — {module_name}")
-    rc = run_cmd(
-        [
-            "python", "src/collector/data_collector.py",
-            "--universe-path", str(universe_csv),
-            "--module-name", module_name,
-        ],
-        cwd=MDSM_PATH,
-        conda_env=CONDA_ENV_MDSM,
-    )
+    rc = run_cmd(cmd, cwd=MDSM_PATH, conda_env=CONDA_ENV_MDSM)
 
     if rc == 0:
         print("\n[OK] Data Collector dokončen.")
@@ -167,9 +191,13 @@ def run_analytical_module(module_name: str, cfg: dict) -> None:
 
     print(f"\n>>> {cfg['label']}")
     print("Zadej parametry:\n")
+    print("  Nejstarší dostupné datum: 17-07-2018 (20 pracovních dní po vzniku XLC)\n")
 
-    from_date = ask_date("Od kdy? (DD-MM-YYYY): ")
-    to_date   = ask_date("Do kdy?  (DD-MM-YYYY): ")
+    from_date_str = ask_date_optional("Od kdy? (DD-MM-YYYY, Enter = 17-07-2018):  ")
+    from_date     = from_date_str if from_date_str else "2018-07-17"
+
+    to_date_str = ask_date_optional("Do kdy?  (DD-MM-YYYY, Enter = dnes):       ")
+    to_date     = to_date_str if to_date_str else datetime.now().strftime("%Y-%m-%d")
     lookback  = ask_lookback()
 
     rc = run_cmd(
