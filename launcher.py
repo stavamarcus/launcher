@@ -28,13 +28,12 @@ MODULES = {
         "conda_env":   "sector_rank_calendar",
         "entry_point": "sector_rank.py",
     },
-    # Přidej další moduly zde:
-    # "my_module": {
-    #     "module_path": BASE / "my_module",
-    #     "label":       "My Module",
-    #     "conda_env":   "my_module_env",
-    #     "entry_point": "main.py",
-    # },
+    "sector_internals_rank_calendar": {
+        "module_path": BASE / "sector_internals_rank_calendar",
+        "label":       "SectorInternalsRankCalendar",
+        "conda_env":   "sector_internals_rank_calendar",
+        "entry_point": "main.py",
+    },
 }
 
 # ── Conda prostředí ─────────────────────────────────────────────────────────────
@@ -111,13 +110,20 @@ def ask_date(prompt: str) -> str:
         except ValueError:
             print("  Neplatný formát. Zadej datum jako DD-MM-YYYY (např. 02-01-2025).")
 
-def ask_lookback() -> str:
-    """Zeptá se na lookback. Povolené hodnoty: 1, 5, 20."""
+LOOKBACKS_PER_MODULE = {
+    "sector_rank_calendar":          ("1", "5", "20"),
+    "sector_internals_rank_calendar": ("1", "5", "10", "20", "30", "50"),
+}
+
+def ask_lookback(module_name: str = "") -> str:
+    """Zeptá se na lookback. Povolené hodnoty závisí na modulu."""
+    valid  = LOOKBACKS_PER_MODULE.get(module_name, ("1", "5", "20"))
+    prompt = "/".join(valid)
     while True:
-        val = input("Lookback (1/5/20): ").strip()
-        if val in ("1", "5", "20"):
+        val = input(f"Lookback ({prompt}): ").strip()
+        if val in valid:
             return val
-        print("  Neplatná volba. Zadej 1, 5 nebo 20.")
+        print(f"  Neplatná volba. Zadej {prompt}.")
 
 # ── Akce ────────────────────────────────────────────────────────────────────────
 
@@ -191,14 +197,17 @@ def run_analytical_module(module_name: str, cfg: dict) -> None:
 
     print(f"\n>>> {cfg['label']}")
     print("Zadej parametry:\n")
-    print("  Nejstarší dostupné datum: 17-07-2018 (20 pracovních dní po vzniku XLC)\n")
-
-    from_date_str = ask_date_optional("Od kdy? (DD-MM-YYYY, Enter = 17-07-2018):  ")
-    from_date     = from_date_str if from_date_str else "2018-07-17"
+    DEFAULT_FROM = {
+        "sector_rank_calendar":           "2018-08-01",
+        "sector_internals_rank_calendar":  "2026-02-01",
+    }
+    default_from  = DEFAULT_FROM.get(module_name, datetime.now().strftime("%Y-%m-01"))
+    from_date_str = ask_date_optional(f"Od kdy? (DD-MM-YYYY, Enter = {default_from}): ")
+    from_date     = from_date_str if from_date_str else default_from
 
     to_date_str = ask_date_optional("Do kdy?  (DD-MM-YYYY, Enter = dnes):       ")
     to_date     = to_date_str if to_date_str else datetime.now().strftime("%Y-%m-%d")
-    lookback  = ask_lookback()
+    lookback  = ask_lookback(module_name)
 
     rc = run_cmd(
         [
@@ -236,14 +245,11 @@ def main():
             input("\nStiskni Enter pro konec...")
             sys.exit(0)
 
-        line1 = "  1. Spustit MDSM-Lite                  "
-        line2 = "  2. Spustit s UniverseManager          "
-        line3 = "  3. Spustit modul SectorRankCalendar   "
-
-        print(line1 + "(stáhne nová tržní data)")
-        print(line2 + "(aktualizuje seznam tickerů a stáhne data)")
+        print("  1. Spustit MDSM-Lite                           (stáhne nová tržní data)")
+        print("  2. Spustit s UniverseManager                   (aktualizuje tickery a stáhne data)")
         for i, (key, cfg) in enumerate(available, 3):
-            print(line3 + "(zobrazí sektorový ranking)")
+            label = cfg["label"]
+            print(f"  {i}. Spustit modul {label:<30} (zobrazí ranking)")
         print("  0. Konec")
         separator()
 
