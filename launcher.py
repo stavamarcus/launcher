@@ -111,7 +111,7 @@ def ask_date(prompt: str) -> str:
             print("  Neplatný formát. Zadej datum jako DD-MM-YYYY (např. 02-01-2025).")
 
 LOOKBACKS_PER_MODULE = {
-    "sector_rank_calendar":          ("1", "5", "20"),
+    "sector_rank_calendar":          ("1", "5", "10", "20", "30"),
     "sector_internals_rank_calendar": ("1", "5", "10", "20", "30", "50"),
 }
 
@@ -198,7 +198,7 @@ def run_analytical_module(module_name: str, cfg: dict) -> None:
     print(f"\n>>> {cfg['label']}")
     print("Zadej parametry:\n")
     DEFAULT_FROM = {
-        "sector_rank_calendar":           "2018-08-01",
+        "sector_rank_calendar":           "2018-09-01",
         "sector_internals_rank_calendar":  "2026-02-01",
     }
     default_from  = DEFAULT_FROM.get(module_name, datetime.now().strftime("%Y-%m-01"))
