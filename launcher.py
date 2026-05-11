@@ -7,7 +7,7 @@ Spuštění: dvojklik na start.bat
 
 import subprocess
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 # ── Konfigurace cest ────────────────────────────────────────────────────────────
@@ -20,6 +20,8 @@ UNIVERSE_MGR_PATH = BASE / "UniverseManager"
 # ── Registr modulů ──────────────────────────────────────────────────────────────
 # Přidej nový modul sem když ho vytvoříš.
 # Modul se zobrazí v menu pouze pokud adresář fyzicky existuje.
+#
+# no_params: True = modul se spustí bez jakýchkoliv CLI parametrů
 
 MODULES = {
     "sector_rank_calendar": {
@@ -27,14 +29,40 @@ MODULES = {
         "label":       "SectorRankCalendar",
         "conda_env":   "sector_rank_calendar",
         "entry_point": "sector_rank.py",
+        "no_params":   False,
     },
     "sector_internals_rank_calendar": {
         "module_path": BASE / "sector_internals_rank_calendar",
         "label":       "SectorInternalsRankCalendar",
         "conda_env":   "sector_internals_rank_calendar",
         "entry_point": "main.py",
+        "no_params":   False,
+    },
+    "market_breadth": {
+        "module_path": BASE / "market_breadth",
+        "label":       "MarketBreadth",
+        "conda_env":   "market_breadth",
+        "entry_point": "main.py",
+        "no_params":   True,
+    },
+    "sp500_rank_calendar": {
+        "module_path": BASE / "sp500_rank_calendar",
+        "label":       "SP500RankCalendar",
+        "conda_env":   "sp500_rank_calendar",
+        "entry_point": "main.py",
+        "no_params":   False,
     },
 }
+
+# ── Per-modul default start date pro Data Collector ─────────────────────────────
+# "dynamic:N" = dnes - N kalendářních dní (počítáno za běhu)
+# "YYYY-MM-DD" = pevné datum
+
+MODULE_DEFAULT_START = {
+    "market_breadth":     "dynamic:550",
+    "sp500_rank_calendar": "dynamic:180",
+}
+GLOBAL_DEFAULT_START = "2018-06-19"
 
 # ── Conda prostředí ─────────────────────────────────────────────────────────────
 
@@ -83,6 +111,17 @@ def select_module(available: list) -> tuple | None:
             return available[choice - 1]
         print("Neplatná volba.")
 
+def resolve_default_start(module_name: str) -> str:
+    """
+    Vrátí default start date pro daný modul jako YYYY-MM-DD string.
+    Podporuje dynamické hodnoty (dynamic:N = dnes - N dní).
+    """
+    raw = MODULE_DEFAULT_START.get(module_name, GLOBAL_DEFAULT_START)
+    if raw.startswith("dynamic:"):
+        days = int(raw.split(":")[1])
+        return (date.today() - timedelta(days=days)).strftime("%Y-%m-%d")
+    return raw
+
 def ask_date_optional(prompt: str) -> str | None:
     """
     Zeptá se na datum ve formátu DD-MM-YYYY.
@@ -100,6 +139,19 @@ def ask_date_optional(prompt: str) -> str | None:
             print("  Neplatný formát. Zadej DD-MM-YYYY (např. 01-01-2016) nebo Enter.")
 
 
+def ask_date_optional_yyyymmdd(prompt: str) -> str | None:
+    """Enter = None. Přijímá YYYY-MM-DD formát."""
+    while True:
+        val = input(prompt).strip()
+        if val == "":
+            return None
+        try:
+            date.fromisoformat(val)
+            return val
+        except ValueError:
+            print("  Neplatný formát. Zadej YYYY-MM-DD nebo Enter.")
+
+
 def ask_date(prompt: str) -> str:
     """Zeptá se na datum ve formátu DD-MM-YYYY. Převede na YYYY-MM-DD pro program."""
     while True:
@@ -113,6 +165,7 @@ def ask_date(prompt: str) -> str:
 LOOKBACKS_PER_MODULE = {
     "sector_rank_calendar":          ("1", "5", "10", "20", "30"),
     "sector_internals_rank_calendar": ("1", "5", "10", "20", "30", "50"),
+    "sp500_rank_calendar":           ("1", "5", "10", "20", "30", "50"),
 }
 
 def ask_lookback(module_name: str = "") -> str:
@@ -136,18 +189,21 @@ def run_mdsm_only(module_name: str, module_path: Path) -> None:
         print("Nejdřív spusť variantu 2 (UniverseManager + MDSM-Lite).")
         return
 
-    # Volitelné datum rozsahu
+    default_start = resolve_default_start(module_name)
+
     print("\nZadej rozsah dat (Enter = použij výchozí hodnoty):\n")
-    start_str = ask_date_optional("Start date (DD-MM-YYYY, Enter = default 2018-06-19): ")
-    end_str   = ask_date_optional("End date   (DD-MM-YYYY, Enter = dnes):               ")
+    start_str = ask_date_optional(f"Start date (DD-MM-YYYY, Enter = {default_start}): ")
+    end_str   = ask_date_optional("End date   (DD-MM-YYYY, Enter = dnes):             ")
+
+    if not start_str:
+        start_str = default_start
 
     cmd = [
         "python", "src/collector/data_collector.py",
         "--universe-path", str(universe_csv),
         "--module-name", module_name,
+        "--start-date", start_str,
     ]
-    if start_str:
-        cmd += ["--start-date", start_str]
     if end_str:
         cmd += ["--end-date", end_str]
 
@@ -190,35 +246,45 @@ def run_universe_then_mdsm(module_name: str, module_path: Path) -> None:
 
 
 def run_analytical_module(module_name: str, cfg: dict) -> None:
-    """Spustí analytický modul s interaktivním zadáním parametrů."""
+    """Spustí analytický modul."""
     module_path = cfg["module_path"]
     entry_point = cfg["entry_point"]
     conda_env   = cfg["conda_env"]
+    no_params   = cfg.get("no_params", False)
 
     print(f"\n>>> {cfg['label']}")
-    print("Zadej parametry:\n")
-    DEFAULT_FROM = {
-        "sector_rank_calendar":           "2018-09-01",
-        "sector_internals_rank_calendar":  "2026-02-01",
-    }
-    default_from  = DEFAULT_FROM.get(module_name, datetime.now().strftime("%Y-%m-01"))
-    from_date_str = ask_date_optional(f"Od kdy? (DD-MM-YYYY, Enter = {default_from}): ")
-    from_date     = from_date_str if from_date_str else default_from
 
-    to_date_str = ask_date_optional("Do kdy?  (DD-MM-YYYY, Enter = dnes):       ")
-    to_date     = to_date_str if to_date_str else datetime.now().strftime("%Y-%m-%d")
-    lookback  = ask_lookback(module_name)
+    if no_params:
+        rc = run_cmd(
+            ["python", entry_point],
+            cwd=module_path,
+            conda_env=conda_env,
+        )
+    else:
+        print("Zadej parametry:\n")
+        DEFAULT_FROM = {
+            "sector_rank_calendar":           "2018-09-01",
+            "sector_internals_rank_calendar":  "2026-02-01",
+            "sp500_rank_calendar":             (date.today() - timedelta(days=90)).strftime("%Y-%m-%d"),
+        }
+        default_from  = DEFAULT_FROM.get(module_name, datetime.now().strftime("%Y-%m-01"))
+        from_date_str = ask_date_optional(f"Od kdy? (DD-MM-YYYY, Enter = {default_from}): ")
+        from_date     = from_date_str if from_date_str else default_from
 
-    rc = run_cmd(
-        [
-            "python", entry_point,
-            "-f", from_date,
-            "-t", to_date,
-            "--lookback", lookback,
-        ],
-        cwd=module_path,
-        conda_env=conda_env,
-    )
+        to_date_str = ask_date_optional("Do kdy?  (DD-MM-YYYY, Enter = dnes):       ")
+        to_date     = to_date_str if to_date_str else datetime.now().strftime("%Y-%m-%d")
+        lookback    = ask_lookback(module_name)
+
+        rc = run_cmd(
+            [
+                "python", entry_point,
+                "-f", from_date,
+                "-t", to_date,
+                "--lookback", lookback,
+            ],
+            cwd=module_path,
+            conda_env=conda_env,
+        )
 
     if rc != 0:
         print(f"\n[CHYBA] {cfg['label']} skončil s chybou (kód {rc}).")
