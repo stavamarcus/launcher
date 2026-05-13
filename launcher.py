@@ -162,6 +162,15 @@ def ask_date(prompt: str) -> str:
         except ValueError:
             print("  Neplatný formát. Zadej datum jako DD-MM-YYYY (např. 02-01-2025).")
 
+# Minimální start_date garantovaný GDU pro každý modul (musí odpovídat start_days v GDU).
+# Pokud uživatel zadá starší datum, launcher zobrazí varování.
+GDU_GUARANTEED_START = {
+    "sector_rank_calendar":           date(2018, 8, 27),   # 2800 dní
+    "sector_internals_rank_calendar": date.today() - timedelta(days=180),
+    "sp500_rank_calendar":            date.today() - timedelta(days=180),
+    "market_breadth":                 date.today() - timedelta(days=550),
+}
+
 LOOKBACKS_PER_MODULE = {
     "sector_rank_calendar":          ("1", "5", "10", "20", "30"),
     "sector_internals_rank_calendar": ("1", "5", "10", "20", "30", "50"),
@@ -179,6 +188,30 @@ def ask_lookback(module_name: str = "") -> str:
         print(f"  Neplatná volba. Zadej {prompt}.")
 
 # ── Akce ────────────────────────────────────────────────────────────────────────
+
+def run_global_daily_update(force_refresh: bool = False) -> None:
+    """Spustí Global Daily Update Manager pro všechny moduly najednou."""
+    print("\n>>> Global Daily Update Manager")
+    print("    Aktualizuje cache pro všechny moduly (513 unikátních conidů).")
+    print("    Každý ticker stažen pouze jednou.\n")
+
+    if force_refresh:
+        confirm = input("  --force-refresh: stáhne VŠECHNA data znovu. Pokračovat? (ano/ne): ").strip().lower()
+        if confirm != "ano":
+            print("  Zrušeno.")
+            return
+
+    cmd = ["python", "src/collector/global_daily_update.py"]
+    if force_refresh:
+        cmd.append("--force-refresh")
+
+    rc = run_cmd(cmd, cwd=MDSM_PATH, conda_env=CONDA_ENV_MDSM)
+
+    if rc == 0:
+        print("\n[OK] Global Daily Update dokončen.")
+    else:
+        print(f"\n[CHYBA] Global Daily Update skončil s chybou (kód {rc}).")
+
 
 def run_mdsm_only(module_name: str, module_path: Path) -> None:
     """Spustí pouze Data Collector pro daný modul."""
@@ -271,6 +304,20 @@ def run_analytical_module(module_name: str, cfg: dict) -> None:
         from_date_str = ask_date_optional(f"Od kdy? (DD-MM-YYYY, Enter = {default_from}): ")
         from_date     = from_date_str if from_date_str else default_from
 
+        # Varování pokud requested start_date je starší než GDU garantuje
+        guaranteed = GDU_GUARANTEED_START.get(module_name)
+        try:
+            requested_dt = date.fromisoformat(from_date)
+            if guaranteed and requested_dt < guaranteed:
+                print(f"\n  [VAROVÁNÍ] Požadovaný start ({from_date}) je starší než GDU garantuje ({guaranteed}).")
+                print(f"             Cache nemusí pokrývat celý rozsah → modul selže s insufficient_cache.")
+                print(f"             Řešení: spusť volbu 1 (MDSM-Lite) s --start-date {from_date} a --force-refresh.")
+                confirm = input("  Pokračovat přesto? (ano/ne): ").strip().lower()
+                if confirm != "ano":
+                    return
+        except ValueError:
+            pass
+
         to_date_str = ask_date_optional("Do kdy?  (DD-MM-YYYY, Enter = dnes):       ")
         to_date     = to_date_str if to_date_str else datetime.now().strftime("%Y-%m-%d")
         lookback    = ask_lookback(module_name)
@@ -311,7 +358,8 @@ def main():
             input("\nStiskni Enter pro konec...")
             sys.exit(0)
 
-        print("  1. Spustit MDSM-Lite                           (stáhne nová tržní data)")
+        print("  G. Global Daily Update                         (aktualizuje cache pro všechny moduly)")
+        print("  1. Spustit MDSM-Lite                           (stáhne nová tržní data – jeden modul)")
         print("  2. Spustit s UniverseManager                   (aktualizuje tickery a stáhne data)")
         for i, (key, cfg) in enumerate(available, 3):
             label = cfg["label"]
@@ -320,11 +368,22 @@ def main():
         separator()
 
         max_choice = 2 + len(available)
-        choice = input(f"Vyber (0-{max_choice}): ").strip()
+        choice = input(f"Vyber (G / 0-{max_choice}): ").strip().upper()
 
         if choice == "0":
             print("Konec.")
             sys.exit(0)
+
+        elif choice == "G":
+            print("\n  a. Standardní update (pouze chybějící bary)")
+            print("  b. Force refresh (stáhne vše znovu)")
+            print("  0. Zpět")
+            sub = input("\nVolba: ").strip().lower()
+            if sub == "a":
+                run_global_daily_update(force_refresh=False)
+            elif sub == "b":
+                run_global_daily_update(force_refresh=True)
+            input("\nStiskni Enter pro návrat do menu...")
 
         elif choice in ("1", "2"):
             selected = select_module(available)
@@ -345,7 +404,7 @@ def main():
             input("\nStiskni Enter pro návrat do menu...")
 
         else:
-            print(f"Neplatná volba. Zadej 0–{max_choice}.")
+            print(f"Neplatná volba. Zadej G nebo 0–{max_choice}.")
 
 
 if __name__ == "__main__":
